@@ -1,0 +1,15 @@
+{
+  "name": "mtg-discord-bot",
+  "version": "0.1.0",
+  "description": "MTG tournament Discord bot — Swiss pairings, per-user private-channel notifications",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
+  }
+}
