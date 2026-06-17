@@ -7,6 +7,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('start-tournament')
     .setDescription('Start a tournament in this channel and ping opted-in members to join')
+    .addStringOption(o => o.setName('from').setDescription('Use a previously announced tournament').setAutocomplete(true))
     .addStringOption(o => o.setName('name').setDescription('Tournament name (default: channel + date)'))
     .addIntegerOption(o => o.setName('rounds').setDescription('Number of Swiss rounds (default: auto by headcount)'))
     .addStringOption(o => o.setName('cut').setDescription('Top cut after Swiss')
@@ -15,10 +16,26 @@ const commands = [
   new SlashCommandBuilder()
     .setName('start-tournament-decklists')
     .setDescription('Start a decklist-required tournament; joiners are prompted to paste a list')
+    .addStringOption(o => o.setName('from').setDescription('Use a previously announced tournament').setAutocomplete(true))
     .addStringOption(o => o.setName('name').setDescription('Tournament name'))
     .addIntegerOption(o => o.setName('rounds').setDescription('Number of Swiss rounds'))
     .addStringOption(o => o.setName('cut').setDescription('Top cut after Swiss')
       .addChoices({ name: 'None', value: 'none' }, { name: 'Top 4', value: 'top4' }, { name: 'Top 8', value: 'top8' })),
+
+  new SlashCommandBuilder()
+    .setName('announce-tournament')
+    .setDescription('Post an upcoming tournament to MyMagicDeck (notifies subscribers)')
+    .addStringOption(o => o.setName('title').setDescription('Tournament name').setRequired(true))
+    .addStringOption(o => o.setName('date').setDescription('Date (YYYY-MM-DD)').setRequired(true))
+    .addStringOption(o => o.setName('format').setDescription('Format')
+      .addChoices(...['Modern','Commander','Standard','Pioneer','Legacy','Vintage','Pauper','Limited','Other'].map(f => ({ name: f, value: f }))))
+    .addStringOption(o => o.setName('mode').setDescription('In-person or online')
+      .addChoices({ name: 'In-person', value: 'in-person' }, { name: 'Online', value: 'online' }))
+    .addStringOption(o => o.setName('region').setDescription('City / venue, or Online'))
+    .addStringOption(o => o.setName('level').setDescription('Level')
+      .addChoices({ name: 'Casual', value: 'casual' }, { name: 'Competitive', value: 'competitive' }, { name: 'Pro', value: 'pro' }))
+    .addNumberOption(o => o.setName('entry').setDescription('Entry fee ($)'))
+    .addStringOption(o => o.setName('url').setDescription('Event link')),
 
   new SlashCommandBuilder().setName('roster')
     .setDescription('Send the current headcount/player list to all participants for confirmation'),

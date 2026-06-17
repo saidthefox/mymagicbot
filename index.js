@@ -8,6 +8,7 @@ const swiss = require('./lib/swiss');
 const store = require('./lib/store');
 const registry = require('./lib/registry');
 const config = require('./lib/config');
+const announce = require('./lib/announce');
 const bracket = require('./lib/bracket');
 const stats = require('./lib/stats');
 const { getPrivateChannel } = require('./lib/channels');
@@ -205,6 +206,40 @@ async function handleCommand(interaction) {
     return handleAdminCommand(interaction, reply);
   }
 
+  if (name === 'announce-tournament') {
+    const m = await guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!canBeTO(guild.id, m)) {
+      const roleId = config.guild(guild.id).toRoleId;
+      return reply(roleId
+        ? 'Only members with the Tournament Organizer role can announce tournaments.'
+        : 'No Tournament Organizer role is set yet. An admin can set one with **/tc-set-to-role**.');
+    }
+    const payload = {
+      title: interaction.options.getString('title'),
+      date: interaction.options.getString('date'),
+      format: interaction.options.getString('format') || 'Other',
+      mode: interaction.options.getString('mode') || 'in-person',
+      region: interaction.options.getString('region') || '',
+      level: interaction.options.getString('level') || 'casual',
+      entry_fee: interaction.options.getNumber('entry') || 0,
+      url: interaction.options.getString('url') || '',
+      source: guild.name,
+    };
+    try {
+      const r = await fetch((process.env.APP_API_URL || '') + '/api/integrations/tournament', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-bot-key': process.env.MYMAGICDECK_BOT_KEY || '' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        announce.add(guild.id, { appId: d.id, title: payload.title, date: payload.date, format: payload.format, mode: payload.mode, region: payload.region, level: payload.level });
+        return reply(`📣 Announced **${payload.title}** (${payload.format}, ${payload.date}) to MyMagicDeck — notified ${d.notified ?? 0} subscriber(s). You can later run **/start-tournament** and pick it under *from*.`);
+      }
+      return reply(`Couldn't post to MyMagicDeck: ${d.error || ('HTTP ' + r.status)}`);
+    } catch (e) { return reply('Could not reach MyMagicDeck (is APP_API_URL / the bot key set?).'); }
+  }
+
   if (name === 'start-tournament' || name === 'start-tournament-decklists') {
     const starter = await guild.members.fetch(interaction.user.id).catch(() => null);
     if (!canBeTO(guild.id, starter)) {
@@ -214,7 +249,8 @@ async function handleCommand(interaction) {
         : 'No Tournament Organizer role is set yet. An admin can set one with **/tc-set-to-role**.');
     }
     if (store.activeForChannel(channelId)) return reply('There is already an active tournament in this channel. Use **/end** first.');
-    const tName = interaction.options.getString('name') ||
+    const fromTitle = interaction.options.getString('from');
+    const tName = fromTitle || interaction.options.getString('name') ||
       `${interaction.channel.name} — ${new Date().toISOString().slice(0, 10)}`;
     const rounds = interaction.options.getInteger('rounds');
     const cut = interaction.options.getString('cut') || 'none';
@@ -222,6 +258,7 @@ async function handleCommand(interaction) {
       channelId, guildId: guild.id, toId: interaction.user.id, name: tName,
       requiresDecklists: name === 'start-tournament-decklists', cut,
     });
+    if (fromTitle) { const a = announce.recent(guild.id).find(x => x.title === fromTitle); if (a && a.appId) { t.appTournamentId = a.appId; store.save(t); } }
     if (rounds) { t.plannedRounds = rounds; store.save(t); }
     const members = await optedInMembers(interaction.channel);
     let pinged = 0;
@@ -673,11 +710,22 @@ async function handleButton(interaction) {
 // ---- wiring -----------------------------------------------------------------
 
 client.once('clientReady', () => console.log(`Logged in as ${client.user.tag}`));
+async function handleAutocomplete(i) {
+  if (i.commandName !== 'start-tournament' && i.commandName !== 'start-tournament-decklists') return i.respond([]);
+  const q = (i.options.getFocused() || '').toLowerCase();
+  const list = announce.recent(i.guildId)
+    .filter(a => !q || (a.title || '').toLowerCase().includes(q))
+    .slice(0, 25)
+    .map(a => ({ name: `${a.title} (${a.format}, ${a.date})`.slice(0, 100), value: String(a.title).slice(0, 100) }));
+  return i.respond(list);
+}
 client.on('interactionCreate', i => {
   if (i.isChatInputCommand()) {
     handleCommand(i).catch(err => {
       console.error(err); i.reply({ content: `Error: ${err.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
     });
+  } else if (i.isAutocomplete()) {
+    handleAutocomplete(i).catch(err => { console.error('autocomplete', err); i.respond([]).catch(() => {}); });
   } else if (i.isButton()) {
     handleButton(i).catch(err => {
       console.error(err); i.reply({ content: `Error: ${err.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
