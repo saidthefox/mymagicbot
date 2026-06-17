@@ -3,6 +3,7 @@ require('dotenv').config();
 const {
   Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
 } = require('discord.js');
 const swiss = require('./lib/swiss');
 const store = require('./lib/store');
@@ -20,9 +21,10 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
+    // No MessageContent / GuildMessages: decklists come via the /decklist modal,
+    // not by reading message text. Avoids the privileged Message Content intent
+    // (and Discord verification) for a publicly-installable bot.
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
 });
@@ -240,6 +242,19 @@ async function handleCommand(interaction) {
     } catch (e) { return reply('Could not reach MyMagicDeck (is APP_API_URL / the bot key set?).'); }
   }
 
+  // ---- /decklist : open a modal to submit/update your decklist ----
+  if (name === 'decklist') {
+    const t = store.listActive().find(x => x.guildId === guild.id && x.requiresDecklists && x.players.some(p => p.id === interaction.user.id));
+    if (!t) return reply("You're not registered for a decklist tournament here. Join one first (react 👍 to its post).");
+    const p = t.players.find(p => p.id === interaction.user.id);
+    const modal = new ModalBuilder().setCustomId('decklist:' + t.id).setTitle(('Decklist — ' + t.name).slice(0, 45));
+    const input = new TextInputBuilder().setCustomId('list').setLabel('Paste your decklist').setStyle(TextInputStyle.Paragraph)
+      .setRequired(true).setMaxLength(4000).setPlaceholder('4 Lightning Bolt\n20 Mountain\n…\n\nSideboard\n3 Pyroblast');
+    if (p && p.decklist) input.setValue('');  // resubmits start blank (raw isn't loaded back)
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return interaction.showModal(modal);
+  }
+
   if (name === 'start-tournament' || name === 'start-tournament-decklists') {
     const starter = await guild.members.fetch(interaction.user.id).catch(() => null);
     if (!canBeTO(guild.id, starter)) {
@@ -264,7 +279,7 @@ async function handleCommand(interaction) {
     let pinged = 0;
     for (const member of members.values()) {
       const extra = t.requiresDecklists
-        ? ` This event **requires a decklist** — if you join, paste it to me here (use \`[mainboard] <sideboard>\` if you like; any format is saved as-is).`
+        ? ` This event **requires a decklist** — if you join, run \`/decklist\` to submit one (any format is saved as-is).`
         : '';
       const msg = await notify(guild, member.id,
         `A tournament is starting: **${t.name}**. React ${EMOJI.up} to join.${extra}`,
@@ -419,7 +434,7 @@ async function handleReaction(reaction, user) {
       const chosen = config.getName(guild.id, user.id) || (m ? m.displayName : user.username);
       t.players.push({ id: user.id, name: chosen, dropped: false, decklist: null });
       store.save(t);
-      const ask = t.requiresDecklists ? ' Now paste your decklist here.' : '';
+      const ask = t.requiresDecklists ? ' Now run `/decklist` to submit your decklist.' : '';
       await notify(guild, user.id, `You're in for **${t.name}**! Wait for the organizer to pair round 1.${ask}`);
     }
     registry.remove(reaction.message.id);
@@ -486,22 +501,21 @@ async function handleReaction(reaction, user) {
   }
 }
 
-// ---- decklist intake (paste into your own private channel) ------------------
+// ---- decklist intake (via the /decklist modal) ------------------------------
 
-async function handleMessage(msg) {
-  if (msg.author.bot || !msg.guild) return;
-  // Only react to pastes in a private channel of a decklist tournament where the author has joined.
-  const t = store.listActive().find(x => x.requiresDecklists && x.players.some(p => p.id === msg.author.id && !p.decklist));
-  if (!t) return;
-  const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
-  if (!member) return;
-  const ch = await getPrivateChannel(msg.guild, member);
-  if (ch.id !== msg.channel.id) return; // only count pastes in their own private channel
-  if (msg.content.trim().length < 10) return;
-  store.saveDecklist(t.id, msg.author.id, msg.content); // raw, exactly as pasted
-  const p = t.players.find(p => p.id === msg.author.id);
+async function handleModal(interaction) {
+  const [action, tid] = interaction.customId.split(':');
+  if (action !== 'decklist') return;
+  const reply = (content) => interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  const t = store.load(tid);
+  if (!t || !t.requiresDecklists) return reply('That tournament is no longer accepting decklists.');
+  const p = t.players.find(p => p.id === interaction.user.id);
+  if (!p) return reply("You're not registered for that tournament.");
+  const raw = interaction.fields.getTextInputValue('list') || '';
+  if (raw.trim().length < 10) return reply('That decklist looks too short — please paste your full list.');
+  store.saveDecklist(t.id, interaction.user.id, raw); // raw, exactly as pasted
   p.decklist = true; store.save(t);
-  await msg.reply(`Decklist saved for **${t.name}** — thanks! You're all set.`);
+  return reply(`Decklist saved for **${t.name}** — thanks! You're all set.`);
 }
 
 // ---- admin setup ------------------------------------------------------------
@@ -730,9 +744,12 @@ client.on('interactionCreate', i => {
     handleButton(i).catch(err => {
       console.error(err); i.reply({ content: `Error: ${err.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
     });
+  } else if (i.isModalSubmit()) {
+    handleModal(i).catch(err => {
+      console.error(err); i.reply({ content: `Error: ${err.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    });
   }
 });
 client.on('messageReactionAdd', (r, u) => handleReaction(r, u).catch(err => console.error('reaction', err)));
-client.on('messageCreate', m => handleMessage(m).catch(err => console.error('message', err)));
 
 client.login(process.env.DISCORD_TOKEN);

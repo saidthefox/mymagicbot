@@ -15,7 +15,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('start-tournament-decklists')
-    .setDescription('Start a decklist-required tournament; joiners are prompted to paste a list')
+    .setDescription('Start a decklist-required tournament; joiners submit a list with /decklist')
     .addStringOption(o => o.setName('from').setDescription('Use a previously announced tournament').setAutocomplete(true))
     .addStringOption(o => o.setName('name').setDescription('Tournament name'))
     .addIntegerOption(o => o.setName('rounds').setDescription('Number of Swiss rounds'))
@@ -68,6 +68,9 @@ const commands = [
     .setDescription('Set the name used for you in tournaments and decklists (defaults to your Discord handle)')
     .addStringOption(o => o.setName('name').setDescription('Your name, exactly as you want it shown').setRequired(true)),
 
+  new SlashCommandBuilder().setName('decklist')
+    .setDescription('Submit or update your decklist for a decklist-required tournament you have joined'),
+
   // ---- stats & history (anyone) ----
   new SlashCommandBuilder().setName('stats')
     .setDescription('Show match/tournament stats')
@@ -107,9 +110,14 @@ const commands = [
 
 (async () => {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  // GUILD_ID set → fast per-guild registration (dev). Unset → GLOBAL registration
+  // for a publicly-installable bot (can take up to ~1h to propagate).
+  const global = !process.env.GUILD_ID;
   await rest.put(
-    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+    global
+      ? Routes.applicationCommands(process.env.CLIENT_ID)
+      : Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
     { body: commands },
   );
-  console.log(`Registered ${commands.length} commands to guild ${process.env.GUILD_ID}`);
+  console.log(`Registered ${commands.length} commands ${global ? 'GLOBALLY (public install)' : 'to guild ' + process.env.GUILD_ID}`);
 })().catch(err => { console.error(err); process.exit(1); });
