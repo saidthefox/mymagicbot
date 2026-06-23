@@ -101,9 +101,10 @@ async function announceRound(guild, t, round, opts = {}) {
     }
     const reactSet = isBracket ? [EMOJI.win20, EMOJI.win21] : [EMOJI.win20, EMOJI.win21, EMOJI.draw];
     const head = isBracket ? `${header}, Table ${table.table}` : header.replace('__T__', table.table);
-    const m1 = await notify(guild, table.p1, `${head}\n${pairingInstructions(playerName(t, table.p2))}${elim}`, reactSet);
+    const mmdNote = table.mmd ? '\n🟢 Or track + confirm this match in **MyMagicDeck 2040** — it reports back here automatically once you both confirm.' : '';
+    const m1 = await notify(guild, table.p1, `${head}\n${pairingInstructions(playerName(t, table.p2))}${elim}${mmdNote}`, reactSet);
     if (m1) registry.set(m1.id, { type: 'pairing', bracket: isBracket, tournamentId: t.id, round: round.number, table: table.table, userId: table.p1 });
-    const m2 = await notify(guild, table.p2, `${head}\n${pairingInstructions(playerName(t, table.p1))}${elim}`, reactSet);
+    const m2 = await notify(guild, table.p2, `${head}\n${pairingInstructions(playerName(t, table.p1))}${elim}${mmdNote}`, reactSet);
     if (m2) registry.set(m2.id, { type: 'pairing', bracket: isBracket, tournamentId: t.id, round: round.number, table: table.table, userId: table.p2 });
   }
 }
@@ -142,6 +143,53 @@ async function promptTOAdvance(guild, t) {
 }
 
 // Core pairing action shared by /pair and the TO 👍 reaction.
+// ── MyMagicDeck 2040 integration: push a round's pairings so linked players can track + confirm there,
+// and poll back the confirmed results to auto-fill the bracket. Both no-op if the integration isn't set. ──
+const MMD_URL = () => (process.env.APP_API_URL || '');
+const MMD_KEY = () => (process.env.MYMAGICDECK_BOT_KEY || '');
+async function mmdPushPairings(t, round) {
+  if (!MMD_URL() || !MMD_KEY()) return;
+  const pairings = round.tables.filter(tb => tb.p2 != null).map(tb => ({ tmatch: round.number + ':' + tb.table, a_discord: tb.p1, b_discord: tb.p2 }));
+  if (!pairings.length) return;
+  try {
+    const r = await fetch(MMD_URL() + '/api/integrations/discord/pairings', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-bot-key': MMD_KEY() },
+      body: JSON.stringify({ tourn: t.id, round: round.number, pairings }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && Array.isArray(d.created)) {
+      const set = new Set(d.created.map(c => c.tmatch));
+      for (const tb of round.tables) if (set.has(round.number + ':' + tb.table)) tb.mmd = true;
+      store.save(t);
+    }
+  } catch (e) { /* MMD is optional */ }
+}
+async function mmdPollResults() {
+  if (!MMD_URL() || !MMD_KEY()) return;
+  for (const t of store.listActive()) {
+    if (!t.rounds || !t.rounds.length) continue;
+    const last = t.rounds[t.rounds.length - 1];
+    if (!last.tables.some(tb => tb.mmd && !(tb.result && tb.confirmed))) continue;
+    let d;
+    try {
+      const r = await fetch(MMD_URL() + '/api/integrations/discord/pairings/' + encodeURIComponent(t.id) + '/results', { headers: { 'x-bot-key': MMD_KEY() } });
+      d = await r.json().catch(() => null);
+    } catch (e) { continue; }
+    if (!d || !Array.isArray(d.results) || !d.results.length) continue;
+    let changed = false;
+    for (const res of d.results) {
+      const [rnd, tbl] = String(res.tmatch || '').split(':');
+      const rd = t.rounds.find(x => String(x.number) === rnd); if (!rd) continue;
+      const tb = rd.tables.find(x => String(x.table) === tbl); if (!tb || (tb.result && tb.confirmed)) continue;
+      tb.result = { winner: res.winner_discord || null, code: res.code }; tb.confirmed = true; tb.pendingConfirm = false; changed = true;
+    }
+    if (changed) {
+      store.save(t);
+      const guild = client.guilds.cache.get(t.guildId);
+      if (guild && allTablesConfirmed(t.rounds[t.rounds.length - 1])) { try { await promptTOAdvance(guild, t); } catch (e) {} }
+    }
+  }
+}
 async function doPair(guild, t) {
   if (!t.plannedRounds) t.plannedRounds = swiss.recommendedRounds(t.players.filter(p => !p.dropped).length);
   t.status = 'playing';
@@ -149,6 +197,7 @@ async function doPair(guild, t) {
   t.rounds.push(round);
   t.currentRound = round.number;
   store.save(t);
+  await mmdPushPairings(t, round);   // mark 2040-tracked tables before announcing
   await announceRound(guild, t, round);
   return round;
 }
@@ -761,7 +810,11 @@ async function handleButton(interaction) {
 
 // ---- wiring -----------------------------------------------------------------
 
-client.once('clientReady', () => console.log(`Logged in as ${client.user.tag}`));
+client.once('clientReady', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  // Poll MyMagicDeck for confirmed 2040 results and auto-fill the bracket (no-op if MMD isn't configured).
+  if (MMD_URL() && MMD_KEY()) { setInterval(() => { mmdPollResults().catch(() => {}); }, 20000); }
+});
 async function handleAutocomplete(i) {
   if (i.commandName !== 'start-tournament' && i.commandName !== 'start-tournament-decklists') return i.respond([]);
   const q = (i.options.getFocused() || '').toLowerCase();
