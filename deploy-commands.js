@@ -82,6 +82,15 @@ const commands = [
   new SlashCommandBuilder().setName('leaderboard')
     .setDescription('Show the all-time leaderboard'),
 
+  // ---- MyMagicDeck account link (anyone) ----
+  new SlashCommandBuilder().setName('link')
+    .setDescription('Link your Discord to your MyMagicDeck account')
+    .addStringOption(o => o.setName('code').setDescription('Code from MyMagicDeck → Account → Link Discord').setRequired(true)),
+
+  new SlashCommandBuilder().setName('mmd-stats')
+    .setDescription("Show a player's MyMagicDeck 2040 match record")
+    .addUserOption(o => o.setName('player').setDescription('Whose record (default: you)')),
+
   // ---- admin setup (Manage Server) ----
   new SlashCommandBuilder().setName('tc-stats-channel')
     .setDescription('[admin] Make THIS the Stats & History channel and post the perpetual message'),

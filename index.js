@@ -242,6 +242,44 @@ async function handleCommand(interaction) {
     } catch (e) { return reply('Could not reach MyMagicDeck (is APP_API_URL / the bot key set?).'); }
   }
 
+  // ---- /link : bind this Discord account to a MyMagicDeck account via a one-time code ----
+  if (name === 'link') {
+    const code = (interaction.options.getString('code') || '').trim();
+    if (!code) return reply('Get a code in MyMagicDeck → Account → 🔗 Link Discord, then run `/link <code>`.');
+    try {
+      const r = await fetch((process.env.APP_API_URL || '') + '/api/integrations/discord/link', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-bot-key': process.env.MYMAGICDECK_BOT_KEY || '' },
+        body: JSON.stringify({ code, discord_id: interaction.user.id, discord_name: interaction.user.username }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) return reply(`✅ Linked your Discord to MyMagicDeck account **${d.username}**. Try **/mmd-stats**.`);
+      return reply(`Couldn't link: ${d.error || ('HTTP ' + r.status)}`);
+    } catch (e) { return reply('Could not reach MyMagicDeck (is APP_API_URL / the bot key set?).'); }
+  }
+
+  // ---- /mmd-stats : a linked player's MyMagicDeck 2040 record ----
+  if (name === 'mmd-stats') {
+    const target = interaction.options.getUser('player') || interaction.user;
+    try {
+      const r = await fetch((process.env.APP_API_URL || '') + '/api/integrations/discord/user/' + target.id, {
+        headers: { 'x-bot-key': process.env.MYMAGICDECK_BOT_KEY || '' },
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const rec = d.record || { w: 0, l: 0, d: 0 };
+        const score = `${rec.w}–${rec.l}${rec.d ? '–' + rec.d : ''}`;
+        return reply(`🏆 **${d.username}** — 2040 record **${score}** (${d.winPct}% across ${d.matches} match${d.matches === 1 ? '' : 'es'}).`);
+      }
+      if (r.status === 404) {
+        return reply(target.id === interaction.user.id
+          ? 'You haven\'t linked a MyMagicDeck account yet — run **/link <code>** (get the code in MyMagicDeck → Account).'
+          : `${target.username} hasn't linked a MyMagicDeck account.`);
+      }
+      return reply(`Couldn't fetch stats: ${d.error || ('HTTP ' + r.status)}`);
+    } catch (e) { return reply('Could not reach MyMagicDeck.'); }
+  }
+
   // ---- /decklist : open a modal to submit/update your decklist ----
   if (name === 'decklist') {
     const t = store.listActive().find(x => x.guildId === guild.id && x.requiresDecklists && x.players.some(p => p.id === interaction.user.id));
