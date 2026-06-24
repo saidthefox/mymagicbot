@@ -248,7 +248,12 @@ async function handleCommand(interaction) {
   const name = interaction.commandName;
   const channelId = interaction.channelId;
   const guild = interaction.guild;
-  const reply = (content) => interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  // Slow commands (API calls + per-player DM loops) can exceed Discord's 3s ack window → "application did
+  // not respond". Defer up front, then route replies through editReply. (None of these open a modal.)
+  const SLOW = new Set(['pair', 're-pair', 'roster', 'start-tournament', 'start-tournament-decklists', 'standings']);
+  let _deferred = false;
+  if (SLOW.has(name)) { try { await interaction.deferReply({ flags: MessageFlags.Ephemeral }); _deferred = true; } catch (_) {} }
+  const reply = (content) => _deferred ? interaction.editReply({ content }) : interaction.reply({ content, flags: MessageFlags.Ephemeral });
 
   // ---- admin setup commands ----
   if (name === 'tc-set-to-role' || name === 'tc-register' || name === 'tc-unregister' || name === 'tc-readme' || name === 'tc-stats-channel' || name === 'tc-to-guide' || name === 'tc-admin-guide') {
