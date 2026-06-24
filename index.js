@@ -147,6 +147,11 @@ async function promptTOAdvance(guild, t) {
 // and poll back the confirmed results to auto-fill the bracket. Both no-op if the integration isn't set. ──
 const MMD_URL = () => (process.env.APP_API_URL || '');
 const MMD_KEY = () => (process.env.MYMAGICDECK_BOT_KEY || '');
+// On /end, tell MyMagicDeck the tournament concluded so the public ledger reveals decklists.
+async function mmdConclude(t) {
+  if (!MMD_URL() || !MMD_KEY() || !t || !t.id) return;
+  try { await fetch(MMD_URL() + '/api/integrations/discord/tournament/' + encodeURIComponent(t.id) + '/conclude', { method: 'POST', headers: { 'content-type': 'application/json', 'x-bot-key': MMD_KEY() }, body: '{}' }); } catch (_) {}
+}
 async function mmdPushPairings(t, round) {
   if (!MMD_URL() || !MMD_KEY()) return;
   const pairings = round.tables.filter(tb => tb.p2 != null).map(tb => ({ tmatch: round.number + ':' + tb.table, a_discord: tb.p1, b_discord: tb.p2 }));
@@ -499,6 +504,7 @@ async function handleCommand(interaction) {
     }
     for (const p of t.players) await notify(guild, p.id, `**${t.name}** is complete!\n${champLine}${text}`);
     await interaction.channel.send(`🏆 **${t.name}** — final results\n${champLine}${text}`);
+    await mmdConclude(t);   // reveal decklists in the public ledger
     registry.clearTournament(t.id);
     store.archive(t);
     await refreshStatsMessage(guild).catch(() => {});
