@@ -838,25 +838,25 @@ async function handleButton(interaction) {
 const REMINDER_LEAD = { 14: 'in 2 weeks', 7: 'in 1 week', 3: 'in 3 days', 1: 'tomorrow' };
 async function tournamentReminders() {
   if (!MMD_URL() || !MMD_KEY()) return;
-  let data;
-  try {
-    const r = await fetch(MMD_URL() + '/api/integrations/discord/tournaments/upcoming?days=15', { headers: { 'x-bot-key': MMD_KEY() } });
-    data = await r.json();
-  } catch (_) { return; }
-  const tournaments = (data && data.tournaments) || [];
-  if (!tournaments.length) return;
   const today = new Date(); today.setHours(0, 0, 0, 0);
   for (const [, guild] of client.guilds.cache) {
     const users = config.notifyUsers(guild.id);
     if (!users.length) continue;
-    for (const t of tournaments) {
-      const days = Math.round((new Date(t.date + 'T00:00:00') - today) / 86400000);
-      const lead = REMINDER_LEAD[days];
-      if (!lead) continue;
-      const line = `🔔 **${t.title}** (${t.format}) is ${lead} — ${t.date}${t.time ? ' ' + t.time : ''}${t.region ? ' · ' + t.region : ''}.${t.url ? ' ' + t.url : ''}`;
-      for (const uid of users) {
+    for (const uid of users) {
+      // Per-user: the server returns the server's own (Discord-sourced) events plus any community-listed
+      // tournaments matching THIS user's subscription filters (via their linked MyMagicDeck account).
+      let data;
+      try {
+        const r = await fetch(MMD_URL() + '/api/integrations/discord/tournaments/upcoming?days=15&discord=' + encodeURIComponent(uid), { headers: { 'x-bot-key': MMD_KEY() } });
+        data = await r.json();
+      } catch (_) { continue; }
+      for (const t of (data && data.tournaments) || []) {
+        const days = Math.round((new Date(t.date + 'T00:00:00') - today) / 86400000);
+        const lead = REMINDER_LEAD[days];
+        if (!lead) continue;
         const key = `${t.id}:${uid}:${days}`;
         if (config.reminderSent(guild.id, key)) continue;
+        const line = `🔔 **${t.title}** (${t.format}) is ${lead} — ${t.date}${t.time ? ' ' + t.time : ''}${t.region ? ' · ' + t.region : ''}.${t.url ? ' ' + t.url : ''}`;
         const sent = await notify(guild, uid, line).catch(() => null);
         if (sent) config.markReminder(guild.id, key);
       }
