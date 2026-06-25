@@ -400,6 +400,18 @@ async function handleCommand(interaction) {
       (updated ? ` Updated in ${updated} active tournament(s).` : ''));
   }
 
+  if (name === 'notifications') {
+    const opt = interaction.options.getBoolean('enabled');
+    if (opt === null) {
+      const on = config.getNotify(guild.id, interaction.user.id);
+      return reply(`Tournament reminders are currently **${on ? 'ON' : 'OFF'}** for you. Use \`/notifications enabled:true\` (or \`false\`) to change. When ON, I ping your private channel **2 weeks, 1 week, 3 days, and 1 day** before each upcoming tournament.`);
+    }
+    config.setNotify(guild.id, interaction.user.id, opt);
+    return reply(opt
+      ? "🔔 Tournament reminders **ON** — I'll ping your private channel 2 weeks, 1 week, 3 days, and 1 day before each upcoming tournament."
+      : '🔕 Tournament reminders **OFF**. (Run `/notifications enabled:true` to turn them back on.)');
+  }
+
   // ---- stats & history (anyone, anywhere) ----
   if (name === 'stats') {
     const target = interaction.options.getUser('player') || interaction.user;
@@ -821,10 +833,44 @@ async function handleButton(interaction) {
 
 // ---- wiring -----------------------------------------------------------------
 
+// Tournament reminders: ping opted-in users (/notifications) in their private channel at fixed lead times
+// before each upcoming Discord-sourced tournament. Dedup per (tournament,user,milestone) so each fires once.
+const REMINDER_LEAD = { 14: 'in 2 weeks', 7: 'in 1 week', 3: 'in 3 days', 1: 'tomorrow' };
+async function tournamentReminders() {
+  if (!MMD_URL() || !MMD_KEY()) return;
+  let data;
+  try {
+    const r = await fetch(MMD_URL() + '/api/integrations/discord/tournaments/upcoming?days=15', { headers: { 'x-bot-key': MMD_KEY() } });
+    data = await r.json();
+  } catch (_) { return; }
+  const tournaments = (data && data.tournaments) || [];
+  if (!tournaments.length) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (const [, guild] of client.guilds.cache) {
+    const users = config.notifyUsers(guild.id);
+    if (!users.length) continue;
+    for (const t of tournaments) {
+      const days = Math.round((new Date(t.date + 'T00:00:00') - today) / 86400000);
+      const lead = REMINDER_LEAD[days];
+      if (!lead) continue;
+      const line = `🔔 **${t.title}** (${t.format}) is ${lead} — ${t.date}${t.time ? ' ' + t.time : ''}${t.region ? ' · ' + t.region : ''}.${t.url ? ' ' + t.url : ''}`;
+      for (const uid of users) {
+        const key = `${t.id}:${uid}:${days}`;
+        if (config.reminderSent(guild.id, key)) continue;
+        const sent = await notify(guild, uid, line).catch(() => null);
+        if (sent) config.markReminder(guild.id, key);
+      }
+    }
+  }
+}
+
+// ---- wiring (reminders) -----------------------------------------------------
 client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
   // Poll MyMagicDeck for confirmed 2040 results and auto-fill the bracket (no-op if MMD isn't configured).
   if (MMD_URL() && MMD_KEY()) { setInterval(() => { mmdPollResults().catch(() => {}); }, 20000); }
+  // Tournament reminders: check on boot, then every 6h (milestones are day-granular; dedup prevents repeats).
+  if (MMD_URL() && MMD_KEY()) { tournamentReminders().catch(() => {}); setInterval(() => { tournamentReminders().catch(() => {}); }, 6 * 60 * 60 * 1000); }
 });
 async function handleAutocomplete(i) {
   if (i.commandName !== 'start-tournament' && i.commandName !== 'start-tournament-decklists') return i.respond([]);

@@ -71,6 +71,10 @@ const commands = [
   new SlashCommandBuilder().setName('decklist')
     .setDescription('Submit or update your decklist for a decklist-required tournament you have joined'),
 
+  new SlashCommandBuilder().setName('notifications')
+    .setDescription('Tournament reminders in your private channel — 2 weeks / 1 week / 3 days / 1 day before')
+    .addBooleanOption(o => o.setName('enabled').setDescription('Turn reminders on or off (omit to just see your current status)')),
+
   // ---- stats & history (anyone) ----
   new SlashCommandBuilder().setName('stats')
     .setDescription('Show match/tournament stats')
