@@ -87,6 +87,16 @@ function locateTable(t, ctx) {
   return { round, table };
 }
 
+// The confirm-message context for the opponent of a reported result. Must carry the
+// pairing's bracket flag: bracket round numbers restart at 1, so a confirm ctx without
+// it resolves against the SWISS round of the same number and mutates the wrong table.
+function confirmCtx(pairCtx, oppId) {
+  return {
+    type: 'confirm', bracket: !!pairCtx.bracket, tournamentId: pairCtx.tournamentId,
+    round: pairCtx.round, table: pairCtx.table, userId: oppId,
+  };
+}
+
 async function announceRound(guild, t, round, opts = {}) {
   const isBracket = !!opts.bracket;
   const header = isBracket
@@ -343,11 +353,9 @@ async function handleCommand(interaction) {
   if (name === 'decklist') {
     const t = store.listActive().find(x => x.guildId === guild.id && x.requiresDecklists && x.players.some(p => p.id === interaction.user.id));
     if (!t) return reply("You're not registered for a decklist tournament here. Join one first (react 👍 to its post).");
-    const p = t.players.find(p => p.id === interaction.user.id);
     const modal = new ModalBuilder().setCustomId('decklist:' + t.id).setTitle(('Decklist — ' + t.name).slice(0, 45));
     const input = new TextInputBuilder().setCustomId('list').setLabel('Paste your decklist').setStyle(TextInputStyle.Paragraph)
       .setRequired(true).setMaxLength(4000).setPlaceholder('4 Lightning Bolt\n20 Mountain\n…\n\nSideboard\n3 Pyroblast');
-    if (p && p.decklist) input.setValue('');  // resubmits start blank (raw isn't loaded back)
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return interaction.showModal(modal);
   }
@@ -568,7 +576,7 @@ async function handleReaction(reaction, user) {
     const cmsg = await notify(guild, oppId,
       `${reporter} reported your match as ${desc}. React ${EMOJI.up} to confirm, or ${EMOJI.down} to dispute.`,
       [EMOJI.up, EMOJI.down]);
-    if (cmsg) registry.set(cmsg.id, { type: 'confirm', tournamentId: t.id, round: ctx.round, table: ctx.table, userId: oppId });
+    if (cmsg) registry.set(cmsg.id, confirmCtx(ctx, oppId));
     return;
   }
 
@@ -900,4 +908,7 @@ client.on('interactionCreate', i => {
 });
 client.on('messageReactionAdd', (r, u) => handleReaction(r, u).catch(err => console.error('reaction', err)));
 
-client.login(process.env.DISCORD_TOKEN);
+// Only log in when run directly (node index.js); tests require() this file for the helpers.
+if (require.main === module) client.login(process.env.DISCORD_TOKEN);
+
+module.exports = { locateTable, confirmCtx };
